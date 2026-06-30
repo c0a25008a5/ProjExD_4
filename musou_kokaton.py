@@ -103,10 +103,11 @@ class Bird(pg.sprite.Sprite):
             self.image = self.imgs[self.dire]
         # ハイパー状態の判定と画像変換を行う
         if self.state == "hyper":
-            self.image = pg.transform.laplacian(self.image)
+            self.image = pg.transform.laplacian(self.imgs[self.dire])
             self.hyper_life -= 1
             if self.hyper_life < 0:
                 self.state = "normal"
+                self.image = self.imgs[self.dire]
         screen.blit(self.image, self.rect)    
 
 
@@ -150,14 +151,15 @@ class Beam(pg.sprite.Sprite):
     """
     ビームに関するクラス
     """
-    def __init__(self, bird: Bird):
+    def __init__(self, bird: Bird, angle0: float = 0):
         """
         ビーム画像Surfaceを生成する
         引数 bird：ビームを放つこうかとん
+        引数 angle0：こうかとんの向きからずらす角度
         """
         super().__init__()
         self.vx, self.vy = bird.dire
-        angle = math.degrees(math.atan2(-self.vy, self.vx))
+        angle = math.degrees(math.atan2(-self.vy, self.vx)) + angle0
         self.image = pg.transform.rotozoom(pg.image.load(f"fig/beam.png"), angle, 1.0)
         self.vx = math.cos(math.radians(angle))
         self.vy = -math.sin(math.radians(angle))
@@ -174,6 +176,25 @@ class Beam(pg.sprite.Sprite):
         self.rect.move_ip(self.speed*self.vx, self.speed*self.vy)
         if check_bound(self.rect) != (True, True):
             self.kill()
+
+
+class NeoBeam:
+    """
+    複数方向へ同時に発射する弾幕クラス
+    """
+    def __init__(self, bird: Bird, num: int):
+        self.bird = bird
+        self.num = num
+
+    def gen_beams(self) -> list[Beam]:
+        """
+        -50度から+50度の範囲に並べたBeamインスタンスをかえす
+        """
+        if self.num <= 1:
+            return [Beam(self.bird)]
+
+        step = 100 // (self.num - 1)
+        return [Beam(self.bird, angle) for angle in range(-50, 51, step)]
 
 
 class Explosion(pg.sprite.Sprite):
@@ -377,20 +398,22 @@ def main():
             if event.type == pg.QUIT:
                 return 0
             if event.type == pg.KEYDOWN and event.key == pg.K_SPACE:
-                beams.add(Beam(bird))
-                
+                if event.mod & pg.KMOD_LSHIFT:
+                    beams.add(*NeoBeam(bird, 5).gen_beams())
+                else:
+                    beams.add(Beam(bird))
+
             # 右Shiftキーで無敵状態発動
             if event.type == pg.KEYDOWN and event.key == pg.K_RSHIFT:
                 if score.value > 100:
                     score.value -= 100
                     bird.state = "hyper"
                     bird.hyper_life = 500
-                    
+
             if (
                 event.type == pg.KEYDOWN
                 and event.key == pg.K_RETURN
-                and score.value >= 200
-                and len(gravities) == 0
+                and score.value > 200
             ):
                 score.value -= 200
                 gravities.add(Gravity(400))
@@ -436,27 +459,31 @@ def main():
             ).keys():
                 exps.add(Explosion(bomb, 50))
                 score.value += 1
+
+        for bomb in pg.sprite.groupcollide(
+            bombs,
+            shields,
+            True,
+            False
+        ).keys():
+            exps.add(Explosion(bomb, 50))
+
         for bomb in pg.sprite.spritecollide(bird, bombs, True):  # こうかとんと衝突した爆弾リスト
+            if bomb.state == "inactive":
+                continue  # EMPで無効化された爆弾は起爆せず消滅する
+
             if bird.state == "hyper":
                 exps.add(Explosion(bomb, 50))  # 爆発エフェクト
                 score.value += 1  # 1点アップ
-            else:
-                life.num -= 1  # 爆弾に衝突したら残機数を1減算する
-            if life.num < 0:  # 残機数が0未満になったらゲームオーバー
+                continue
+
+            life.num -= 1  # 爆弾に衝突したら残機数を1減算する
+            if life.num <= 0:  # 残機数が0になったらゲームオーバー
                 bird.change_img(8, screen)  # こうかとん悲しみエフェクト
                 score.update(screen)
                 pg.display.update()
                 time.sleep(2)
                 return
-
-
-            if bomb.state == "inactive":
-                continue  # 無効化された爆弾は起爆せず消滅するだけ
-            bird.change_img(8, screen)  # こうかとん悲しみエフェクト
-            score.update(screen)
-            pg.display.update()
-            time.sleep(2)
-            return
         
         bird.update(key_lst, screen)
         beams.update()
